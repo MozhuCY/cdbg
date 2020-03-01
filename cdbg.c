@@ -59,7 +59,7 @@ void addBp(uint64_t addr)
 	}
 }
 
-void mread(char * s,int size)
+/*void mread(char * s,int size)
 {
 	int i;
 	while(i < size)
@@ -104,7 +104,7 @@ int cmdParser()
 		}
 	}
 	return result;
-}
+}*/
 
 __attribute__((constructor)) void inits()
 {
@@ -113,21 +113,36 @@ __attribute__((constructor)) void inits()
 	setbuf(stdout,0);
 }
 
-void func()
+
+int findBp(uint64_t addr)
 {
-	struct user_regs_struct regs;
-	ptrace(PTRACE_GETREGS, child, NULL, &regs);
-	printf("rax:%x\n", regs.rax);
-	//printf("bladdr:%llx :%llx\n",BreakPointList[0]->addr,BreakPointList[0]->backup);
-	writeText(BreakPointList[0]->addr,BreakPointList[0]->backup);
-	//printf("addr:%llx :%llx\n", regs.rip,readText(regs.rip));
-	regs.rip -= 1;
-	//printf("addr:%llx :%llx\n", regs.rip,readText(regs.rip));
-	ptrace(PTRACE_SETREGS, child, NULL, &regs);
-	singleStep();//error
-	wait(NULL);
-	writeText(BreakPointList[0]->addr,(BreakPointList[0]->backup&0xffffffffffffff00) | 0xcc);
-	cont();
+	int i;
+	for(i = 0;i < 0x10;i++)
+	{
+		if(BreakPointList[i]->addr == addr)
+		{
+			return i;
+		}
+	}
+	return -1;
+}
+
+void func(int status)
+{
+	if((status >> 8) == 0x5)
+	{
+		struct user_regs_struct regs;
+		ptrace(PTRACE_GETREGS, child, NULL, &regs);
+		int index = findBp(regs.rip - 1);
+		assert(index >= 0);
+		writeText(BreakPointList[0]->addr,BreakPointList[index]->backup);
+		regs.rip -= 1;
+		ptrace(PTRACE_SETREGS, child, NULL, &regs);
+		singleStep();//error
+		wait(NULL);
+		writeText(BreakPointList[index]->addr,(BreakPointList[index]->backup&0xffffffffffffff00) | 0xcc);
+		cont();
+	}
 }
 int main(int argc,char * argv)
 {
@@ -152,18 +167,10 @@ int main(int argc,char * argv)
 		addBp(0x4009C8);
 		cont();
 		while(status != 0)
-		{
-			//ptrace(PTRACE_GETREGS,pid,NULL,&regs);
-			//printf("rip:%llx\n",regs.rip);
-			//ptrace(PTRACE_POKEDATA,pid,0x601030,0x666c6167666c6167);
-			//if(cmdParser())
-			//{				
+		{				
 			wait(&status);
 			printf("%d\n",status);
-			func();
-			 //wait(&status);
-			 //                        printf("%d\n",status);
-			//}//
+			func(status);
 		}
 	}
 	return 0;
