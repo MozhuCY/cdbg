@@ -10,15 +10,53 @@
 #include <sys/types.h>
 #include <sys/user.h>
 
+#define BC 0x10
+
 typedef struct bp
 {
 	uint64_t addr;
 	uint64_t backup;
+	uint64_t watch;
 } bp;
+
+
+enum user_regs_enum
+{
+	r15,
+    	r14,
+    	r13,
+    	r12,
+    	rbp,
+ 	rbx,
+ 	r11,
+ 	r10,
+    	r9,
+    	r8,
+    	rax,
+    	rcx,
+    	rdx,
+    	rsi,
+    	rdi,
+    	orig_rax,
+    	rip,
+    	cs,
+    	eflags,
+    	rsp,
+    	ss,
+    	fs_base,
+    	gs_base,
+    	ds,
+    	es,
+    	fs,
+    	gs,
+};
+
+char * regname[27] = {"r15","r14","r13","r12","rbp","rbx","r11","r10","r9","r8","rax","rcx","rdx","rsi","rdi","orgi_rax","rip","cs","eflags","rsp","ss","fs_base","gc_base","ds","es","fs","gs"};
+
 
 char * cmd;
 pid_t child = -1;
-bp * BreakPointList[0x10] = {0};
+bp * BreakPointList[BC] = {0};
 
 uint64_t readText(uint64_t addr)
 {
@@ -40,19 +78,24 @@ void cont()
 	ptrace(PTRACE_CONT,child,0,0);
 }	
 
-void addBp(uint64_t addr)
+void getRegs(struct user_regs_struct * regs)
+{
+	ptrace(PTRACE_GETREGS, child, NULL, regs);
+}
+void addBp(uint64_t addr,int watch)
 {
 	int i;
-	for(i = 0;i < 0x10;i++)
+	for(i = 0;i < BC;i++)
 	{
 		if(BreakPointList[i] == 0)
 		{
 			bp * BreakPoint = (bp *)malloc(sizeof(bp));
+			
 			BreakPoint->addr = addr;
 			BreakPoint->backup = readText(addr);
-			printf("%x:%llx\n",addr,BreakPoint->backup);
+			BreakPoint->watch = watch;
+
 			writeText(addr,(BreakPoint->backup&0xffffffffffffff00) | 0xcc);
-			printf("%llx\n",readText(addr));
 			BreakPointList[i] = BreakPoint;
 			return;
 		}
@@ -117,7 +160,7 @@ __attribute__((constructor)) void inits()
 int findBp(uint64_t addr)
 {
 	int i;
-	for(i = 0;i < 0x10;i++)
+	for(i = 0;i < BC;i++)
 	{
 		if(BreakPointList[i]->addr == addr)
 		{
@@ -127,18 +170,26 @@ int findBp(uint64_t addr)
 	return -1;
 }
 
+void showReg(struct user_regs_struct regs,int watch)
+{
+	printf("[*]%5s: 0x%llx\n",regname[watch],*(((long long int *)&regs) + watch));
+}
+
 void func(int status)
 {
 	if((status >> 8) == 0x5)
 	{
 		struct user_regs_struct regs;
-		ptrace(PTRACE_GETREGS, child, NULL, &regs);
+		getRegs(&regs);
 		int index = findBp(regs.rip - 1);
 		assert(index >= 0);
-		writeText(BreakPointList[0]->addr,BreakPointList[index]->backup);
+		
+		if(BreakPointList[index]->watch != -1) showReg(regs,BreakPointList[index]->watch);
+
+		writeText(BreakPointList[index]->addr,BreakPointList[index]->backup);
 		regs.rip -= 1;
 		ptrace(PTRACE_SETREGS, child, NULL, &regs);
-		singleStep();//error
+		singleStep();
 		wait(NULL);
 		writeText(BreakPointList[index]->addr,(BreakPointList[index]->backup&0xffffffffffffff00) | 0xcc);
 		cont();
@@ -150,8 +201,6 @@ int main(int argc,char * argv)
 	char filename[] = "./WcyVM";
 	char * binsh[] = {"/bin/sh",0};
 	struct user_regs_struct regs;
-	
-	int fd = open(filename,O_RDWR);
 
 	pid_t pid = fork();
 	assert(pid >= 0);
@@ -164,12 +213,11 @@ int main(int argc,char * argv)
 	{
 		child = pid;
 		wait(NULL);
-		addBp(0x4009C8);
+		addBp(0x4009C8,rax);
 		cont();
 		while(status != 0)
 		{				
 			wait(&status);
-			printf("%d\n",status);
 			func(status);
 		}
 	}
